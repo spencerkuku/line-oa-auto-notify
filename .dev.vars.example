@@ -1,0 +1,6 @@
+# 請複製成 .dev.vars 後填入實際值
+LINE_CHANNEL_SECRET=your_line_channel_secret
+LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
+DEBUG_API_KEY=your_debug_api_key
+LOG_LEVEL=info

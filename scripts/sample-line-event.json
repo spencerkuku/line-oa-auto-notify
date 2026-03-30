@@ -1,0 +1,18 @@
+{
+  "destination": "xxxxxxxxxx",
+  "events": [
+    {
+      "type": "message",
+      "timestamp": 1711800000000,
+      "source": {
+        "type": "user",
+        "userId": "U1234567890abcdef"
+      },
+      "message": {
+        "id": "1234567890123",
+        "type": "text",
+        "text": "測試通知 from LINE OA"
+      }
+    }
+  ]
+}
