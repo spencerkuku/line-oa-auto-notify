@@ -9,6 +9,10 @@
 - 解析 LINE events，先支援文字訊息
 - 使用 Channel access token 查詢 LINE 顯示名稱
 - 發送 Discord Embed（顯示名稱/使用者 ID、訊息內容、時間）
+- 過期事件略過（預設超過 5 分鐘不轉發，避免重放攻擊）
+- 使用者級通知冷卻（需綁定 KV；冷卻內僅接收不轉發）
+- 自動中和 Discord mention（`@everyone`/`@here`/`<@...>`）
+- 訊息長度保護（超過 1000 字自動裁切）
 - 提供受保護的 `POST /debug/send-test` 直接測 Discord 發送
 - 提供受保護的 `POST /debug/line-simulate` 模擬 LINE 訊息格式
 - 429/5xx 與網路錯誤自動重試（最多 3 次）
@@ -36,6 +40,7 @@ LINE_CHANNEL_ACCESS_TOKEN=your_line_channel_access_token
 DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/xxx/yyy
 DEBUG_API_KEY=your_debug_api_key
 LOG_LEVEL=info
+COOLDOWN_SECONDS=120
 ```
 
 ## 本機啟動
@@ -43,6 +48,14 @@ LOG_LEVEL=info
 ```bash
 npm run dev
 ```
+
+若你是開源專案維護者，建議改用私有設定檔（避免把 Cloudflare 資源 ID 寫入版本庫）：
+
+```bash
+cp wrangler.toml.example wrangler.toml
+```
+
+再把 `wrangler.toml` 內的 KV `id` / `preview_id` 填入你自己的 Cloudflare 資源。
 
 ## 部署
 
@@ -54,6 +67,29 @@ npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
 npx wrangler secret put DISCORD_WEBHOOK_URL
 npx wrangler secret put DEBUG_API_KEY
 ```
+
+若要啟用冷卻機制，請先建立並綁定 KV Namespace：
+
+```bash
+npx wrangler kv namespace create NOTIFY_STORAGE
+npx wrangler kv namespace create NOTIFY_STORAGE --preview
+```
+
+開源專案建議：
+- `wrangler.toml.example` 作為模板文件。
+- production 使用 `wrangler.toml`。
+- 把指令輸出的 `id` / `preview_id` 填進 `wrangler.toml`。
+
+```bash
+npm run dev
+npm run deploy
+```
+
+若是私有 repo 或你接受公開 KV ID，也可直接填入 `wrangler.toml` 的 `[[kv_namespaces]]` 區塊。
+
+說明：
+- `COOLDOWN_SECONDS` 預設為 `120`。
+- 若未綁定 `NOTIFY_STORAGE`，服務仍可運作，但不會啟用冷卻抑制。
 
 部署：
 

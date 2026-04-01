@@ -1,0 +1,15 @@
+name = "lineoa-notification"
+main = "src/index.ts"
+compatibility_date = "2026-03-30"
+
+[observability]
+enabled = true
+
+[vars]
+COOLDOWN_SECONDS = "120"
+
+# Optional: bind KV namespace for per-user notification cooldown.
+# [[kv_namespaces]]
+# binding = "NOTIFY_STORAGE"
+# id = "<your-production-kv-namespace-id>"
+# preview_id = "<your-preview-kv-namespace-id>"

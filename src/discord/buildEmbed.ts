@@ -1,9 +1,25 @@
 import type { DiscordEmbed, LineEvent } from "../types";
 
+const MAX_MESSAGE_LENGTH = 1000;
+
+function neutralizeMentions(text: string): string {
+  return text
+    .replace(/@(everyone|here)/gi, "@\u200b$1")
+    .replace(/<@([!&]?\d+)>/g, "<@\u200b$1>");
+}
+
+function truncateText(text: string, maxLength: number): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+  return `${text.slice(0, maxLength)}...`;
+}
+
 function formatMessage(event: LineEvent): string {
   const messageType = event.message?.type ?? "unknown";
   if (messageType === "text") {
-    return event.message?.text ?? "(empty)";
+    const originalText = event.message?.text ?? "(empty)";
+    return truncateText(neutralizeMentions(originalText), MAX_MESSAGE_LENGTH);
   }
 
   const messageId = event.message?.id ? `, id=${event.message.id}` : "";
@@ -29,17 +45,17 @@ function resolveUserLabel(event: LineEvent): string {
 
 export function buildLineMessageEmbed(event: LineEvent, userLabel?: string): DiscordEmbed {
   const message = formatMessage(event);
-  const user = userLabel ?? resolveUserLabel(event);
-  const eventTime = new Date(event.timestamp).toISOString();
+  const user = neutralizeMentions(userLabel ?? resolveUserLabel(event));
+  const unixTs = Math.floor(event.timestamp / 1000);
 
   return {
     title: "LINE OA 新訊息",
     color: 0x00b900,
-    timestamp: eventTime,
+    description: message,
     fields: [
-      { name: "使用者", value: user },
-      { name: "訊息內容", value: message },
-      { name: "時間", value: eventTime },
+      { name: "使用者", value: user, inline: true },
+      { name: "時間", value: `<t:${unixTs}:f> (<t:${unixTs}:R>)`, inline: true },
     ],
+    footer: { text: `ID: ${event.message?.id ?? "N/A"}` },
   };
 }

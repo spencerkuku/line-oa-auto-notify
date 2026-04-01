@@ -76,6 +76,9 @@ async function handleDebugSendTest(request: Request, env: Env): Promise<Response
 
 async function handleWebhook(request: Request, env: Env): Promise<Response> {
   const requestId = getRequestId(request);
+  const replayWindowMs = 5 * 60 * 1000;
+  const cooldownRaw = Number.parseInt(env.COOLDOWN_SECONDS ?? "120", 10);
+  const cooldownSeconds = Number.isFinite(cooldownRaw) && cooldownRaw > 0 ? cooldownRaw : 120;
 
   if (!env.LINE_CHANNEL_SECRET || !env.DISCORD_WEBHOOK_URL) {
     log("error", env.LOG_LEVEL, "Missing required env vars", { requestId });
@@ -110,11 +113,55 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
 
   const messageEvents = pickMessageEvents(payload.events ?? []);
   let successCount = 0;
+  let suppressedCount = 0;
+  let expiredCount = 0;
   const failures: string[] = [];
 
   for (const event of messageEvents) {
-    const displayName = await fetchLineDisplayName(event, env);
+    const now = Date.now();
+    if (Math.abs(now - event.timestamp) > replayWindowMs) {
+      expiredCount += 1;
+      log("warn", env.LOG_LEVEL, "Skipped expired event", {
+        requestId,
+        eventTimestamp: event.timestamp,
+        now,
+      });
+      continue;
+    }
+
     const userId = event.source?.userId;
+    if (userId && env.NOTIFY_STORAGE) {
+      const kvKey = `last_notify:${userId}`;
+      const nowUnix = Math.floor(now / 1000);
+
+      try {
+        const lastNotifyRaw = await env.NOTIFY_STORAGE.get(kvKey);
+        if (lastNotifyRaw) {
+          const lastNotifyUnix = Number.parseInt(lastNotifyRaw, 10);
+          if (Number.isFinite(lastNotifyUnix) && nowUnix - lastNotifyUnix < cooldownSeconds) {
+            suppressedCount += 1;
+            log("info", env.LOG_LEVEL, "Suppressing notification (cooldown)", {
+              requestId,
+              userId,
+              cooldownSeconds,
+            });
+            continue;
+          }
+        }
+
+        await env.NOTIFY_STORAGE.put(kvKey, String(nowUnix), {
+          expirationTtl: cooldownSeconds + 60,
+        });
+      } catch (error) {
+        log("warn", env.LOG_LEVEL, "Cooldown KV check failed; continuing without cooldown", {
+          requestId,
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    const displayName = await fetchLineDisplayName(event, env);
     const userLabel = displayName && userId ? `${displayName} (${userId})` : displayName ?? undefined;
     const embed = buildLineMessageEmbed(event, userLabel);
     const result = await sendDiscordWebhook(env.DISCORD_WEBHOOK_URL, embed);
@@ -147,6 +194,9 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
     requestId,
     totalEvents: payload.events?.length ?? 0,
     processedMessageEvents: messageEvents.length,
+    forwardedMessageEvents: successCount + failures.length,
+    suppressedByCooldown: suppressedCount,
+    skippedExpiredEvents: expiredCount,
     delivered: successCount,
     failed: failures.length,
     lastError: failures.length > 0 ? failures[failures.length - 1] : undefined,

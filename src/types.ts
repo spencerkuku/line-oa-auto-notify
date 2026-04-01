@@ -4,6 +4,8 @@ export interface Env {
   DISCORD_WEBHOOK_URL: string;
   DEBUG_API_KEY?: string;
   LOG_LEVEL?: "debug" | "info" | "warn" | "error";
+  NOTIFY_STORAGE?: KVNamespace;
+  COOLDOWN_SECONDS?: string;
 }
 
 export interface LineWebhookPayload {
@@ -28,12 +30,16 @@ export interface LineEvent {
 }
 
 export interface DiscordEmbed {
-  title: string;
-  color: number;
-  timestamp: string;
-  fields: Array<{
+  title?: string;
+  description?: string;
+  color?: number;
+  timestamp?: string;
+  fields?: Array<{
     name: string;
     value: string;
     inline?: boolean;
   }>;
+  footer?: {
+    text: string;
+  };
 }
