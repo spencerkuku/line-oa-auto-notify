@@ -1,8 +1,8 @@
 import { buildLineMessageEmbed } from "./discord/buildEmbed";
 import { sendDiscordWebhook } from "./discord/sendWebhook";
-import { fetchLineDisplayName } from "./line/fetchDisplayName";
 import { parseWebhookPayload, pickMessageEvents } from "./line/parseEvents";
 import { verifyLineSignature } from "./line/verifySignature";
+import { deliverLineEvent } from "./notify/deliverEvent";
 import type { Env } from "./types";
 import { log } from "./utils/logger";
 
@@ -76,7 +76,6 @@ async function handleDebugSendTest(request: Request, env: Env): Promise<Response
 
 async function handleWebhook(request: Request, env: Env): Promise<Response> {
   const requestId = getRequestId(request);
-  const replayWindowMs = 5 * 60 * 1000;
   const cooldownRaw = Number.parseInt(env.COOLDOWN_SECONDS ?? "120", 10);
   const cooldownSeconds = Number.isFinite(cooldownRaw) && cooldownRaw > 0 ? cooldownRaw : 120;
 
@@ -118,66 +117,55 @@ async function handleWebhook(request: Request, env: Env): Promise<Response> {
   const failures: string[] = [];
 
   for (const event of messageEvents) {
-    const now = Date.now();
-    if (Math.abs(now - event.timestamp) > replayWindowMs) {
-      expiredCount += 1;
-      log("warn", env.LOG_LEVEL, "Skipped expired event", {
+    const outcome = await deliverLineEvent(event, env, cooldownSeconds);
+
+    if (outcome.status !== "expired" && outcome.cooldownWarning) {
+      log("warn", env.LOG_LEVEL, "Cooldown KV check failed; continuing without cooldown", {
         requestId,
-        eventTimestamp: event.timestamp,
-        now,
+        userId: event.source?.userId,
+        error: outcome.cooldownWarning,
       });
-      continue;
     }
 
-    const userId = event.source?.userId;
-    if (userId && env.NOTIFY_STORAGE) {
-      const kvKey = `last_notify:${userId}`;
-      const nowUnix = Math.floor(now / 1000);
-
-      try {
-        const lastNotifyRaw = await env.NOTIFY_STORAGE.get(kvKey);
-        if (lastNotifyRaw) {
-          const lastNotifyUnix = Number.parseInt(lastNotifyRaw, 10);
-          if (Number.isFinite(lastNotifyUnix) && nowUnix - lastNotifyUnix < cooldownSeconds) {
-            suppressedCount += 1;
-            log("info", env.LOG_LEVEL, "Suppressing notification (cooldown)", {
-              requestId,
-              userId,
-              cooldownSeconds,
-            });
-            continue;
-          }
-        }
-
-        await env.NOTIFY_STORAGE.put(kvKey, String(nowUnix), {
-          expirationTtl: cooldownSeconds + 60,
-        });
-      } catch (error) {
-        log("warn", env.LOG_LEVEL, "Cooldown KV check failed; continuing without cooldown", {
+    switch (outcome.status) {
+      case "expired":
+        expiredCount += 1;
+        log("warn", env.LOG_LEVEL, "Skipped expired event", {
           requestId,
-          userId,
-          error: error instanceof Error ? error.message : String(error),
+          eventTimestamp: event.timestamp,
+          now: outcome.now,
         });
-      }
-    }
+        break;
 
-    const displayName = await fetchLineDisplayName(event, env);
-    const userLabel = displayName && userId ? `${displayName} (${userId})` : displayName ?? undefined;
-    const embed = buildLineMessageEmbed(event, userLabel);
-    const result = await sendDiscordWebhook(env.DISCORD_WEBHOOK_URL, embed);
+      case "suppressed":
+        suppressedCount += 1;
+        log("info", env.LOG_LEVEL, "Suppressing notification (cooldown)", {
+          requestId,
+          userId: outcome.userId,
+          cooldownSeconds,
+        });
+        break;
 
-    log(result.ok ? "info" : "error", env.LOG_LEVEL, "Discord webhook result", {
-      requestId,
-      ok: result.ok,
-      status: result.status,
-      attempts: result.attempts,
-      error: result.error,
-    });
+      case "delivered":
+        successCount += 1;
+        log("info", env.LOG_LEVEL, "Discord webhook result", {
+          requestId,
+          ok: true,
+          status: outcome.httpStatus,
+          attempts: outcome.attempts,
+        });
+        break;
 
-    if (result.ok) {
-      successCount += 1;
-    } else {
-      failures.push(result.error ?? `status=${result.status}`);
+      case "failed":
+        failures.push(outcome.error ?? `status=${outcome.httpStatus}`);
+        log("error", env.LOG_LEVEL, "Discord webhook result", {
+          requestId,
+          ok: false,
+          status: outcome.httpStatus,
+          attempts: outcome.attempts,
+          error: outcome.error,
+        });
+        break;
     }
   }
 
